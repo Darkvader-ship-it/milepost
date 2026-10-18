@@ -307,7 +307,7 @@ describe('FinalizeAwards — the single-application flow', () => {
   });
 
   it('blocks finalising when the middle vote is below the programme minimum', async () => {
-    programme.get_config.mockResolvedValue(unwrap(makeConfig({ minimum_award: 2000000000n })));
+    programme.get_config.mockImplementation(() => unwrap(makeConfig({ minimum_award: 2000000000n })));
     renderPage();
     await loadApplication();
 
@@ -325,7 +325,7 @@ describe('FinalizeAwards — the single-application flow', () => {
   });
 
   it('blocks finalising when the budget cannot cover the award', async () => {
-    programme.budget.mockResolvedValue(unwrap(1000000000n));
+    programme.budget.mockImplementation(() => unwrap(1000000000n));
     renderPage();
     await loadApplication();
 
@@ -337,7 +337,7 @@ describe('FinalizeAwards — the single-application flow', () => {
   });
 
   it('says when an application is still short of votes', async () => {
-    programme.get_application.mockResolvedValue(
+    programme.get_application.mockImplementation(() =>
       unwrap(makeApplication({ votes: [1000000000n, 1500000000n] })),
     );
     renderPage();
@@ -351,7 +351,7 @@ describe('FinalizeAwards — the single-application flow', () => {
   });
 
   it('shows an already-settled application with the award it produced', async () => {
-    programme.get_application.mockResolvedValue(unwrap(makeApplication({ finalized: true })));
+    programme.get_application.mockImplementation(() => unwrap(makeApplication({ finalized: true })));
     renderPage();
     submitApplicant(APPLICANT);
 

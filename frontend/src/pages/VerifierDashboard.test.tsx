@@ -217,7 +217,7 @@ describe('VerifierDashboard — reviewer voting', () => {
   });
 
   it('does not allow voting once the application has left review', async () => {
-    programme.get_application.mockResolvedValue(unwrap(makeApplication({ finalized: true })));
+    programme.get_application.mockImplementation(() => unwrap(makeApplication({ finalized: true })));
     renderDashboard();
     await selectApplicant();
 

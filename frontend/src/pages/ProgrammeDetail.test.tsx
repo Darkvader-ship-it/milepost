@@ -235,7 +235,7 @@ describe('ProgrammeDetail — what each phase allows', () => {
   });
 
   it('makes finalising available in Review and names the reviewers’ job', async () => {
-    programme.get_phase.mockResolvedValue(unwrap({ tag: 'Review' }));
+    programme.get_phase.mockImplementation(() => unwrap({ tag: 'Review' }));
     renderProgramme(`/programme/${REAL_ID}`);
     await moneyReady();
 
@@ -255,7 +255,7 @@ describe('ProgrammeDetail — what each phase allows', () => {
   });
 
   it('opens releases when Settled but keeps refunds shut until the window passes', async () => {
-    programme.get_phase.mockResolvedValue(unwrap({ tag: 'Settled' }));
+    programme.get_phase.mockImplementation(() => unwrap({ tag: 'Settled' }));
     renderProgramme(`/programme/${REAL_ID}`);
 
     expect(await screen.findByRole('link', { name: 'Release' })).toBeTruthy();
@@ -265,7 +265,7 @@ describe('ProgrammeDetail — what each phase allows', () => {
   });
 
   it('passes every deadline and opens refunds once the release window has passed', async () => {
-    programme.get_config.mockResolvedValue(
+    programme.get_config.mockImplementation(() =>
       unwrap(
         makeConfig({
           apply_deadline: 1,
@@ -275,7 +275,7 @@ describe('ProgrammeDetail — what each phase allows', () => {
         }),
       ),
     );
-    programme.get_phase.mockResolvedValue(unwrap({ tag: 'Settled' }));
+    programme.get_phase.mockImplementation(() => unwrap({ tag: 'Settled' }));
     renderProgramme(`/programme/${REAL_ID}`);
 
     expect(await screen.findByText('All configured deadlines have passed.')).toBeTruthy();
@@ -290,7 +290,7 @@ describe('ProgrammeDetail — what each phase allows', () => {
   });
 
   it('turns refunds on and flags the cancellation when the programme was cancelled', async () => {
-    programme.get_phase.mockResolvedValue(unwrap({ tag: 'Cancelled' }));
+    programme.get_phase.mockImplementation(() => unwrap({ tag: 'Cancelled' }));
     renderProgramme(`/programme/${REAL_ID}`);
 
     expect(await screen.findByText('This programme was cancelled.')).toBeTruthy();
@@ -358,7 +358,7 @@ describe('ProgrammeDetail — the metadata document', () => {
     const hash = Array.from(new Uint8Array(digest))
       .map((byte) => byte.toString(16).padStart(2, '0'))
       .join('');
-    programme.get_config.mockResolvedValue(
+    programme.get_config.mockImplementation(() =>
       unwrap(makeConfig({ metadata_hash: Buffer.from(hash, 'hex') })),
     );
 
