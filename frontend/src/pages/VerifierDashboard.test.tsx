@@ -11,7 +11,7 @@ import { VerifierDashboard } from './VerifierDashboard';
 // The contract clients are faked through `useSoroban`; nothing touches the
 // network.
 
-const REVIEWER = `GRVW${'A'.repeat(52)}`;
+const ADDRESS = `GRVW${'A'.repeat(52)}`;
 const APPLICANT = 'GB6PCCOLV2NF4DP4LEU7JSWAVPKXMUKCWZGL3M3VRY6FNPW3EY4R2AAW';
 const VERIFY_PROGRAMME_ID = 'CBJWECZ3EUVNAE73YIMT2KWWNRHRF7NNWVKOLQRVOHSKYRYE32XBRPW7';
 const REVIEW_PROGRAMME_ID = 'CCOIACASOVO3ZQLXWWJFGZAU3Y545AGPXLBP4NYHYD77RDCBPXRVZ37C';
@@ -68,13 +68,18 @@ function makeProgramme() {
   };
 }
 
+function makeAttest() {
+  return { attest: vi.fn(() => sendable(Buffer.alloc(32, 0xab))) };
+}
+
 let programme = makeProgramme();
+let attest = makeAttest();
 let indexed: { id: string; name: string | null; creator: string | null; createdLedger: number | null }[] = [];
 let programmeAtImpl: (id: string) => unknown = () => programme;
 
 vi.mock('../context/useSoroban', () => ({
   useSoroban: () => ({
-    attest: { attest: vi.fn(() => sendable(Buffer.alloc(32, 0xab))) },
+    attest,
     demoProgramme: programme,
     programmeAt: (id: string) => programmeAtImpl(id),
   }),
@@ -109,9 +114,10 @@ function submitVote() {
 
 beforeEach(() => {
   programme = makeProgramme();
+  attest = makeAttest();
   indexed = [];
   programmeAtImpl = () => programme;
-  mocks.address = REVIEWER;
+  mocks.address = ADDRESS;
   mocks.announce.mockClear();
   mocks.connect.mockClear();
 });
@@ -131,7 +137,7 @@ describe('VerifierDashboard — reviewer voting', () => {
       expect(programme.review).toHaveBeenCalledTimes(1);
     });
     expect(programme.review).toHaveBeenCalledWith({
-      reviewer: REVIEWER,
+      reviewer: ADDRESS,
       applicant: APPLICANT,
       approved: 2500000000n,
     });
@@ -156,7 +162,7 @@ describe('VerifierDashboard — reviewer voting', () => {
       expect(programme.review).toHaveBeenCalledTimes(2);
     });
     expect(programme.review).toHaveBeenLastCalledWith({
-      reviewer: REVIEWER,
+      reviewer: ADDRESS,
       applicant: APPLICANT,
       approved: 1800000000n,
     });
@@ -271,5 +277,142 @@ describe('VerifierDashboard — reviewer voting', () => {
     expect(await screen.findByText('Community resilience grants 2026 — Open')).toBeTruthy();
     expect(await screen.findByText('Workforce skills grants, cohort 3 — Review')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Review here' })).toBeTruthy();
+  });
+});
+
+describe('VerifierDashboard — the queue and signing', () => {
+  it('gates signing behind the explicit confirmation checkbox', async () => {
+    renderDashboard();
+
+    const [claim] = await screen.findAllByRole('article');
+    fireEvent.click(within(claim).getByRole('button', { name: 'Review claim' }));
+
+    // Opening the card shows exactly what is being signed: the schema, the
+    // recipient and the ledger the claim was requested at.
+    expect(within(claim).getByText('condition-met/v1')).toBeTruthy();
+    expect(within(claim).getByText('GBQX4M7KDA9X2P5R8T1W3Y6ZQ4N7B2V5C8X1M7KDA9X2P')).toBeTruthy();
+    expect(within(claim).getByText('4,852,210')).toBeTruthy();
+
+    const confirm = () =>
+      within(claim).getByRole('button', { name: 'Confirm and sign' }) as HTMLButtonElement;
+    expect(confirm().disabled).toBe(true);
+
+    const gate = within(claim).getByRole('checkbox', { name: /I checked this myself/ });
+    fireEvent.click(gate);
+    expect(confirm().disabled).toBe(false);
+
+    fireEvent.click(gate);
+    expect(confirm().disabled).toBe(true);
+
+    // Cancel collapses the card and forgets the tick; reopening starts clean.
+    fireEvent.click(within(claim).getByRole('button', { name: 'Cancel' }));
+    expect(within(claim).queryByRole('checkbox')).toBeNull();
+    fireEvent.click(within(claim).getByRole('button', { name: 'Review claim' }));
+    expect(confirm().disabled).toBe(true);
+
+    expect(attest.attest).not.toHaveBeenCalled();
+  });
+
+  it('signs an attestation and moves the claim out of the queue', async () => {
+    renderDashboard();
+
+    const [claim] = await screen.findAllByRole('article');
+    fireEvent.click(within(claim).getByRole('button', { name: 'Review claim' }));
+    fireEvent.change(within(claim).getByLabelText('Reference (optional)'), {
+      target: { value: 'register page 12' },
+    });
+    fireEvent.click(within(claim).getByRole('checkbox'));
+    fireEvent.click(within(claim).getByRole('button', { name: 'Confirm and sign' }));
+
+    await waitFor(() => expect(attest.attest).toHaveBeenCalledTimes(1));
+    expect(attest.attest).toHaveBeenCalledWith({
+      attester: ADDRESS,
+      schema_uid: Buffer.alloc(32),
+      subject: 'GBQX4M7KDA9X2P5R8T1W3Y6ZQ4N7B2V5C8X1M7KDA9X2P',
+      data_hash: Buffer.alloc(32),
+      expires_at: undefined,
+    });
+    expect(mocks.announce).toHaveBeenCalledWith('Signing attestation.');
+    expect(mocks.announce).toHaveBeenCalledWith(
+      'Attestation signed. GBQX4M7KDA9X2P5R8T1W3Y6ZQ4N7B2V5C8X1M7KDA9X2P can now release tranche 2.',
+    );
+
+    // The claim leaves the queue, the attestation joins the signed list, and
+    // the summary counts both changes.
+    await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText('Not used yet')).toHaveLength(2));
+
+    const summary = screen.getByRole('list', { name: 'Verification summary' });
+    const stats = within(summary).getAllByRole('listitem').map((li) => li.textContent);
+    expect(stats).toContain('Waiting for you2');
+    expect(stats).toContain('Signed3');
+  });
+
+  it('keeps a failed claim in the queue, still open, and explains the refusal', async () => {
+    attest.attest.mockRejectedValue(new Error('HostError: Error(Contract, #8)'));
+    renderDashboard();
+
+    const [claim] = await screen.findAllByRole('article');
+    fireEvent.click(within(claim).getByRole('button', { name: 'Review claim' }));
+    fireEvent.click(within(claim).getByRole('checkbox'));
+    fireEvent.click(within(claim).getByRole('button', { name: 'Confirm and sign' }));
+
+    const alert = await screen.findByRole('alert');
+    // Known defect, reported rather than fixed here: like the review panel
+    // above, this screen re-runs `explain()` over the `Explained` value
+    // `useTransaction` already produced, so the specific "schema is
+    // restricted" explanation degrades to the generic one. What matters — and
+    // what is asserted — is that the refusal is explained, the raw HostError
+    // never reaches the user, and the money did not move.
+    expect(
+      within(alert).getByText('Something went wrong that we do not have a specific explanation for.'),
+    ).toBeTruthy();
+    expect(within(alert).getByText('The details are in the browser console.')).toBeTruthy();
+    expect(screen.queryByText(/Error\(Contract/)).toBeNull();
+    // The spoken failure is generic-but-honest; the reason is dropped because
+    // the handler reads `signTx.error` after `await`, when it is still stale.
+    expect(mocks.announce).toHaveBeenCalledWith('Attestation not signed.', 'alert');
+
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(within(claim).getByRole('checkbox')).toBeTruthy();
+  });
+
+  it('sends nothing when the verifier cannot confirm', async () => {
+    renderDashboard();
+
+    const [claim] = await screen.findAllByRole('article');
+    fireEvent.click(within(claim).getByRole('button', { name: /Can.t confirm/ }));
+
+    await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(2));
+    expect(attest.attest).not.toHaveBeenCalled();
+    expect(mocks.announce).toHaveBeenCalledWith(
+      'Marked as not confirmed. Nothing was sent; the tranche stays locked.',
+    );
+  });
+
+  it('empties the queue and says so when every claim has been answered', async () => {
+    renderDashboard();
+
+    while (screen.queryAllByRole('article').length > 0) {
+      const card = screen.getAllByRole('article')[0];
+      fireEvent.click(within(card).getByRole('button', { name: /Can.t confirm/ }));
+    }
+
+    expect(screen.getByText('All done.')).toBeTruthy();
+    const summary = screen.getByRole('list', { name: 'Verification summary' });
+    expect(within(summary).getByText('0')).toBeTruthy();
+  });
+
+  it('asks a signed-out visitor to sign in, with nothing to sign yet', async () => {
+    mocks.address = null;
+    renderDashboard();
+
+    expect(screen.getByRole('heading', { name: 'Sign in with your verifier account' })).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Verification summary' })).toBeNull();
+    expect(screen.queryAllByRole('article')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    expect(attest.attest).not.toHaveBeenCalled();
   });
 });
